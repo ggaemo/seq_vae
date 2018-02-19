@@ -22,10 +22,27 @@ class Sequential_VAE():
 
         self.loss = self.compute_loss(self.logits)
 
-        self.train_op = self.build_train_op(self.loss, learning_rate, grad_clip)
 
+
+        self.accuracy = self.compute_metrics(self.logits)
+
+        self.summary_list, self.update_op_list = self.build_summary({'nll': self.loss,
+                                                                     'acc' :
+                                                                         self.accuracy})
+
+        with tf.control_dependencies(self.update_op_list.values()):
+            self.train_op = self.build_train_op(self.loss, learning_rate, grad_clip)
+
+        self.summary = tf.summary.merge([tf.summary.scalar(key, val) for key, val in \
+                                         self.summary_list.items()])
 
     def build_encoder(self, inputs, hidden_size, sequence_length):
+        '''
+        :param inputs: encoder input(word embeddings)
+        :param hidden_size: dimension of rnn hidden states
+        :param sequence_length: vector of the lengths of each encoder input sequence
+        :return: outputs, state [output of rnn]
+        '''
         # create a BasicRNNCell
         rnn_cell = tf.nn.rnn_cell.GRUCell(hidden_size)
 
@@ -43,12 +60,17 @@ class Sequential_VAE():
         return outputs, state
 
 
-    def build_decoder(self, hidden_size, encoder_state):
+    def build_decoder(self, hidden_size, decoder_input):
+        '''
+        :param hidden_size: dimension of rnn hidden states
+        :param decoder_input: decoder input (encoder output state)
+        :return: sample_id, logits []
+        '''
         decoder_cell = tf.nn.rnn_cell.GRUCell(hidden_size)  # 그냥 seq vae
         helper = tf.contrib.seq2seq.TrainingHelper(self.word_embeddings, tf.ones_like(
             self.inputs_seq_len) * self.max_len)
         decoder = tf.contrib.seq2seq.BasicDecoder(decoder_cell, helper,
-                                                  initial_state=encoder_state)
+                                                  initial_state=decoder_input)
         final_outputs, final_state, final_sequence_lengths = \
             tf.contrib.seq2seq.dynamic_decode(
             decoder)
@@ -59,12 +81,6 @@ class Sequential_VAE():
 
 
     def compute_loss(self, logits):
-        # labels = tf.one_hot(self.inputs, self.vocabulary_size)
-        # prob = tf.nn.softmax(logits)
-        # xent = labels * tf.log(prob +1e-8)
-        #
-        # self.prob = prob
-        # self.labels = labels
         xent = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.inputs,
                                                               logits=logits)
         mask = tf.sequence_mask(self.inputs_seq_len, self.max_len, xent.dtype)
@@ -76,8 +92,15 @@ class Sequential_VAE():
         return train_loss
 
 
-    def compute_metrics(self):
-        pass
+    def compute_metrics(self, logits):
+        mask = tf.sequence_mask(self.inputs_seq_len, self.max_len, tf.int32)
+        acc = tf.metrics.accuracy(labels=self.inputs, predictions=tf.argmax(logits,
+                                                                            axis=2),
+                                  weights=mask,
+                                  metrics_collections='metrics',
+                                  updates_collections='update')
+        return acc
+
 
 
     def build_train_op(self, loss, learning_rate, grad_clip):
@@ -89,3 +112,15 @@ class Sequential_VAE():
         update_step = optimizer.apply_gradients(zip(clipped_gradients, params))
         self.global_grad_norm = global_grad_norm
         return update_step
+
+
+    def build_summary(self, variable_list):
+        summary_list = dict()
+        update_op_list = dict()
+        for key, value in variable_list.items():
+            mean, update_op = tf.contrib.metrics.streaming_mean(value,
+                                                                metrics_collections='loss',
+                                                                updates_collections='update')
+            update_op_list[key] = update_op
+            summary_list[key] = mean
+        return summary_list, update_op_list
