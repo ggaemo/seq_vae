@@ -115,11 +115,14 @@ with tf.Session(config=config) as sess:
                         print('test loss ', summary_val_test)
                         saver.save(sess, 'model/{}/model.ckpt'.format(model_dir),
                                    global_step=epoch)
+
                         trn_summary, test_summary = sess.run([trn_model.summary,
                                                      test_model.summary])
-
                         summary_writer.add_summary(trn_summary, epoch)
                         summary_writer.add_summary(test_summary, epoch)
+                        summary = sess.run(trn_model.summary)
+                        summary_writer.add_summary(summary, epoch)
+
                         break
                 break
 
