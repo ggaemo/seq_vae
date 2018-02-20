@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 class Sequential_VAE():
-    def __init__(self, inputs, inputs_seq_len, vocabulary_size, embedding_size,
+    def __init__(self, data_type, inputs, inputs_seq_len, vocabulary_size, embedding_size,
                  hidden_size, learning_rate, grad_clip):
 
         self.inputs = inputs
@@ -18,19 +18,22 @@ class Sequential_VAE():
                                                             hidden_size,
                                                       inputs_seq_len)
 
-        self.sample_id, self.logits = self.build_decoder(hidden_size, self.encoder_state)
+        self.sample_id, self.logits, self.pred = self.build_decoder(hidden_size,
+                                                            self.encoder_state)
 
-        self.loss = self.compute_loss(self.logits)
-
-
+        self.loss, self.loss_2 = self.compute_loss(self.logits)
 
         self.accuracy = self.compute_metrics(self.logits)
 
-        self.summary_list, self.update_op_list = self.build_summary({'nll': self.loss,
+        self.summary_list, self.update_op_list = self.build_summary({'loss': self.loss,
+                                                                     'loss_2' :
+                                                                         self.loss_2,
                                                                      'acc' :
                                                                          self.accuracy})
 
-        with tf.control_dependencies(self.update_op_list.values()):
+
+        if data_type=='train':
+            # with tf.control_dependencies(self.update_op_list.values()):
             self.train_op = self.build_train_op(self.loss, learning_rate, grad_clip)
 
         self.summary = tf.summary.merge([tf.summary.scalar(key, val) for key, val in \
@@ -77,7 +80,8 @@ class Sequential_VAE():
         output_layer = tf.layers.Dense(self.vocabulary_size, use_bias=False)
         sample_id = final_outputs.sample_id
         logits = output_layer(final_outputs.rnn_output)
-        return sample_id, logits
+        pred = tf.argmax(logits, axis=2)
+        return sample_id, logits, pred
 
 
     def compute_loss(self, logits):
@@ -89,7 +93,12 @@ class Sequential_VAE():
         train_loss = tf.reduce_mean(tf.reduce_sum(xent_masked, axis=1))
         self.xent = xent
         self.xent_masked = xent_masked
-        return train_loss
+
+        loss_2 = tf.contrib.seq2seq.sequence_loss(logits, self.inputs, mask,
+                                         average_across_timesteps=False,
+                                         average_across_batch=True)
+        loss_2 = tf.reduce_sum(loss_2)
+        return train_loss, loss_2
 
 
     def compute_metrics(self, logits):
